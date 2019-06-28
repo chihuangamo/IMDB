@@ -1,0 +1,356 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+#Description
+##distribution, mean, and q1,q3
+```{r}
+movie_df <- df %>% 
+  filter(titleType == "movie") %>% 
+  filter(numVotes >= 10) %>% #numVote >= 10
+  group_by(tconst) %>% 
+  slice(1) %>% 
+  filter(numVotes >= 10) %>%  
+  ungroup()
+
+movie_df %>% 
+  summarise(rating_q1 = quantile(averageRating, 0.25),
+            rating_q3 = quantile(averageRating, 0.75))
+```
+
+```{r}
+mean <- mean(movie_df$averageRating, na.rm = T) %>% round(2)
+movie_df %>% 
+  ggplot()+
+    geom_histogram(aes(averageRating))+
+    geom_vline(xintercept = mean, colour = "red", linetype="dashed", show.legend = T)+
+    annotate("text", label = mean, x = mean, y= -1, size = 4, colour = "red")+
+    theme_light()
+```
+#Who is most likeky to be in a bad/good movie?
+##Bad movies
+```{r}
+bad_movie <- movie_df %>% 
+  filter(averageRating < 5.4)
+
+bad_movie <- df %>% 
+  filter(tconst %in% bad_movie$tconst) 
+```
+```{r}
+bad_movie %>%
+  count(nconst, category, primaryName) %>%
+  filter(!is.na(primaryName)) %>% 
+  arrange(desc(n)) %>% 
+  slice(1:50)
+```
+
+```{r}
+bad_movie %>%
+  count(nconst, category, primaryName) %>%
+  filter(n >= 20) %>% 
+  filter(!is.na(primaryName)) %>% 
+  ggplot()+
+  geom_col(aes(x = reorder( primaryName, -n), y = n, fill = category))+
+  theme(axis.text.x=element_text(angle=45, hjust=1))+
+  xlab("Name")
+```
+##Good movies
+```{r}
+good_movie <- movie_df %>% 
+  filter(averageRating > 7.2)
+
+good_movie <- df %>% 
+  filter(tconst %in% good_movie$tconst) 
+```
+```{r}
+good_movie %>%
+  count(nconst, category, primaryName) %>%
+  filter(!is.na(primaryName)) %>% 
+  arrange(desc(n)) %>% 
+  slice(1:50)
+```
+```{r}
+good_movie %>%
+  count(nconst, category, primaryName) %>%
+  filter(!is.na(primaryName)) %>% 
+  filter(n >= 10) %>% 
+  ggplot()+
+  geom_col(aes(x = reorder(primaryName, -n), y = n, fill = category))+
+  theme(axis.text.x=element_text(angle=60, hjust=1))+
+  xlab("Name")
+```
+# Another view: mean rating of a person
+##filtering people at least appear 3 times in different movie
+```{r}
+crew <- df %>% 
+  filter(titleType == "movie") %>%  
+  filter(numVotes >= 10) %>% 
+  count(nconst, tconst) %>% 
+  count(nconst) %>% 
+  filter(n >= 3) 
+```
+
+```{r}
+crew_average_rating <- df %>% 
+  filter(titleType == "movie") %>% 
+  filter(numVotes >= 10) %>% 
+  filter(nconst %in% crew$nconst) %>% 
+  group_by(nconst) %>% 
+  mutate(crew_average_rating = mean(averageRating))
+```
+##Top 10
+```{r}
+crew_average_rating %>% 
+  slice(1) %>% 
+  filter(!is.na(primaryName)) %>% 
+  ungroup() %>% 
+  arrange(desc(crew_average_rating)) %>% 
+  top_n(10) %>% 
+  ggplot(aes(x = reorder(primaryName, -crew_average_rating), y = crew_average_rating, fill = category)) +
+  geom_col() +
+  theme(axis.text.x=element_text(angle=60, hjust=1))+
+  geom_text(aes(label = crew_average_rating %>% round(2)), vjust = -0.5, size = 3)+
+  xlab("Name")
+```
+## Last 10
+```{r}
+crew_average_rating %>% 
+  slice(1) %>% 
+  filter(!is.na(primaryName)) %>% 
+  ungroup() %>% 
+  arrange(crew_average_rating) %>%  
+  top_n(-10) %>% 
+  ggplot(aes(x = reorder(primaryName, crew_average_rating), y = crew_average_rating, fill = category))+
+  geom_col()+
+  theme(axis.text.x=element_text(angle=60, hjust=1))+
+  geom_text(aes(label = crew_average_rating %>% round(2)), vjust = -0.5, size = 3)+
+  xlab("Name")
+```
+# who's the highest/lowest rated double?
+##Finding doubles appears >= 3 times
+```{r}
+network_df <- df %>%
+  filter(titleType == "movie") %>% 
+  filter(numVotes >= 10) %>% 
+  select(tconst, nconst, averageRating) %>% 
+  group_by(tconst) %>% 
+  arrange(desc(nconst)) %>% 
+  mutate(next_nconst = lag(nconst)) %>% 
+  filter(!is.na(next_nconst)) %>% 
+  ungroup() %>% 
+  select(-tconst) %>%  
+  mutate(id1 = as.numeric(substr(nconst, 3, length(nconst))),
+         id2 = as.numeric(substr(next_nconst, 3, length(next_nconst)))) %>% 
+  mutate(new_nconst = ifelse(id1 > id2, next_nconst, nconst),
+         new_next_nconst = ifelse(id1 > id2, nconst, next_nconst)) %>% 
+  mutate(nconst = new_nconst, next_nconst = new_next_nconst) %>%
+  select(nconst, next_nconst, averageRating) 
+
+edges <- network_df %>%
+  count(nconst, next_nconst) %>% 
+  filter(n>=3)
+
+double_rating <- network_df %>%
+  right_join(edges, by = c("nconst", "next_nconst")) %>% 
+  filter(!is.na(n)) %>% 
+  group_by(nconst, next_nconst) %>% 
+  mutate(double_average_rating = mean(averageRating)) %>% 
+  select(-averageRating)
+```
+###Define a person's main category
+```{r}
+crew_main_cat <- df %>% 
+  group_by(nconst) %>% 
+  count(category) %>% 
+  arrange(desc(n)) %>% 
+  slice(1) %>% 
+  select(-n)
+
+crew_name <- df %>% 
+  select(nconst, primaryName) %>% 
+  group_by(nconst, primaryName) %>% 
+  slice(1) %>% 
+  ungroup()
+```
+###Merge tables
+```{r}
+double_rating <- double_rating %>%
+  left_join(crew_main_cat, by = "nconst") %>% 
+  rename(nconst_cat = category) %>% 
+  left_join(crew_main_cat, by = c("next_nconst" = "nconst")) %>% 
+  rename(next_nconst_cat = category)
+
+double_rating <- double_rating %>% 
+  left_join(crew_name, by = "nconst") %>% 
+  rename(nconst_name = primaryName) %>% 
+  left_join(crew_name, by = c("next_nconst" = "nconst")) %>% 
+  rename(next_nconst_name = primaryName)
+```
+###Top 10
+```{r}
+double_rating %>% 
+  ungroup() %>% 
+  arrange(desc(double_average_rating)) %>% 
+  slice(1:10)
+```
+### Last 10
+```{r}
+double_rating %>% 
+  ungroup() %>% 
+  arrange(double_average_rating) %>% 
+  slice(1:10)
+```
+
+#Clustering for crews(looks bad)
+```{r}
+g <- graph_from_data_frame(double_rating %>% select(nconst, next_nconst, n, double_average_rating),
+                           directed = F,
+                           )
+```
+##Making adjacency matrix
+```{r}
+A <- as_adjacency_matrix(g, attr = "n")
+```
+##Simlilarity matrix and dist
+```{r}
+S <- qlcMatrix::corSparse(A)
+H <- 1-S
+d <- as.dist(H)
+```
+## hierachical clustering
+```{r}
+factoextra::fviz_nbclust(S, 
+             FUNcluster = factoextra::hcut,
+             method = "silhouette",     
+             k.max = 20          
+             ) + 
+  labs(title="Silhouette method") 
+```
+
+```{r}
+hc_cluster_tree <- hclust(d, method = "average")
+hc_cluster <- cutree(hc_cluster_tree, k=2)
+V(g)$hc_cluster <- hc_cluster
+
+df_cluster %>% 
+  group_by(hc_cluster) %>% 
+  summarise(n = n(),
+            mean_rating = mean(crew_average_rating))
+```
+
+##Spectral clustring
+```{r}
+# http://www.di.fc.ul.pt/~jpn/r/spectralclustering/spectralclustering.html
+make_affinity <- function(S, n.neighboors=2) {
+  N <- length(S[,1])
+
+  if (n.neighboors >= N) {  # fully connected
+    A <- S
+  } else {
+    A <- matrix(rep(0,N^2), ncol=N)
+    for(i in 1:N) { # for each line
+      # only connect to those points with larger similarity 
+      best.similarities <- sort(S[i,], decreasing=TRUE)[1:n.neighboors]
+      for (s in best.similarities) {
+        j <- which(S[i,] == s)
+        A[i,j] <- S[i,j]
+        A[j,i] <- S[i,j] # to make an undirected graph, ie, the matrix becomes symmetric
+      }
+    }
+  }
+  A  
+}
+```
+
+```{r}
+A <- make_affinity(S, 3)
+D <- diag(apply(A, 1, sum))
+U <- D - A
+```
+
+```{r}
+"%^%" <- function(M, power){
+  with(eigen(M), vectors %*% (values^power * solve(vectors)))
+}
+  
+k <- 2
+evL <- eigen(U, symmetric=TRUE)
+Z <- evL$vectors[,(ncol(evL$vectors)-k+1):ncol(evL$vectors)]
+```
+```{r}
+plot(1:10, rev(evL$values)[1:10])
+```
+```{r}
+sp_cluster <- kmeans(Z, centers=2)
+V(g)$sp_cluster <- sp_cluster$cluster
+```
+
+```{r}
+df_cluster <- igraph::as_data_frame(g, what = "vertices") %>% 
+  left_join(crew_average_rating %>% slice(1) %>% select(nconst, crew_average_rating),
+            by = c("name" = "nconst"))
+```
+```{r}
+df_cluster %>% 
+  group_by(sp_cluster) %>% 
+  summarise(n = n(),
+            mean_rating = mean(crew_average_rating))
+```
+
+```{r}
+df_cluster %>% 
+  mutate(sp_cluster = as.factor(sp_cluster)) %>% 
+  group_by(sp_cluster) %>% 
+  mutate(mean = mean(crew_average_rating)) %>% 
+  ggplot +
+  geom_density(aes(crew_average_rating, color = sp_cluster))+
+  geom_vline(aes(xintercept = mean, color=sp_cluster),
+               linetype="dashed")+
+  xlab("mean rating") +
+  theme_minimal()
+```
+
+
+
+
+#Clustering for movies
+```{r}
+const <- df %>% 
+  filter(titleType == "movie") %>%  
+  filter(numVotes >= 100) %>% 
+  group_by(nconst, tconst) %>%
+  slice(1) %>% #Each person can only appears one time in each movie
+  select(tconst, nconst) %>% 
+  ungroup()
+
+const %>% count(tconst) %>% View()
+```
+
+```{r}
+library(Matrix)
+toAdjMatrix <- function(df){
+	A <- spMatrix(nrow=length(unique(df$nconst)),
+				  ncol=length(unique(df$tconst)),
+				  i = as.numeric(factor(df$nconst)),
+				  j = as.numeric(factor(df$tconst)),
+				  x = rep(1, length(as.numeric(df$nconst))) )
+	row.names(A) <- levels(factor(df$nconst))
+	colnames(A) <- levels(factor(df$tconst))
+	Acol <- tcrossprod(t(A))
+	Matrix(Acol)
+}
+
+A <- toAdjMatrix(const)
+A <- A / apply(A, 1, max)
+
+A[1:10, 1:10]
+```
+```{r}
+factoextra::fviz_nbclust(as.matrix(A), 
+             FUNcluster = factoextra::kmeans,
+             method = "silhouette",     
+             k.max = 16          
+             ) + 
+  labs(title="Silhouette method") 
+```
+
