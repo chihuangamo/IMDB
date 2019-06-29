@@ -5,6 +5,7 @@ output: html_notebook
 #Description
 ##distribution, mean, and q1,q3
 ```{r}
+# df <- readRDS("imdb.rds")
 movie_df <- df %>% 
   filter(titleType == "movie") %>% 
   filter(numVotes >= 10) %>% #numVote >= 10
@@ -80,7 +81,7 @@ good_movie %>%
   xlab("Name")
 ```
 # Another view: mean rating of a person
-##filtering people at least appear 3 times in different movie
+##filtering people at least appear 3 times in different movie and caculate mean rating
 ```{r}
 crew <- df %>% 
   filter(titleType == "movie") %>%  
@@ -88,9 +89,7 @@ crew <- df %>%
   count(nconst, tconst) %>% 
   count(nconst) %>% 
   filter(n >= 3) 
-```
 
-```{r}
 crew_average_rating <- df %>% 
   filter(titleType == "movie") %>% 
   filter(numVotes >= 10) %>% 
@@ -201,23 +200,91 @@ double_rating %>%
   slice(1:10)
 ```
 
-#Clustering for crews(looks bad)
+#Clustering for crews
 ```{r}
+library(igraph)
 g <- graph_from_data_frame(double_rating %>% select(nconst, next_nconst, n, double_average_rating),
                            directed = F,
                            )
+ecount(g)
 ```
-##Making adjacency matrix
+##Community analysis
+```{r}
+community <- cluster_leading_eigen(g, weights=E(g)$n)
+community
+```
+###Defining nodes attributes
+```{r}
+V(g)$community <- community$membership
+nodes_df <- igraph::as_data_frame(g, what = "vertices") %>% 
+  left_join(crew_average_rating %>%
+              slice(1) %>% 
+              select(nconst, crew_average_rating, primaryName), by = c("name" = "nconst")) %>% 
+  left_join(crew_main_cat, by = c("name" = "nconst"))
+```
+###Find best/worst communitis with 5 or more members
+```{r}
+community_over_5 <- nodes_df %>%
+  count(community) %>% 
+  arrange(desc(n)) %>% 
+  filter(n >= 5)
+
+community_over_5
+```
+```{r}
+community_rating <- nodes_df %>% 
+  filter(community %in% community_over_5$community) %>% 
+  group_by(community) %>% 
+  mutate(community_average_rating = mean(crew_average_rating)) %>% 
+  slice(1) %>% 
+  select(community, community_average_rating)
+
+community_rating %>% arrange(desc(community_average_rating))
+```
+####Who is in the best/worst community?
+Best community
+```{r}
+nodes_df %>% filter(community == 672)
+```
+Worst Community
+```{r}
+nodes_df %>% filter(community == 333)
+```
+###Visualization of community over 5 members
+```{r}
+library(visNetwork)
+
+g <- graph_from_data_frame(double_rating %>% select(nconst, next_nconst, n, double_average_rating),
+                           directed = F,
+                           vertices = nodes_df)
+
+sub_g <- induced_subgraph(g, which(V(g)$community %in% community_over_5$community))
+
+sub_g_vis <- toVisNetworkData(sub_g)
+sub_g_vis$nodes <- sub_g_vis$nodes %>%
+  rename(group = category, id = label, label = primaryName) 
+
+visNetwork(nodes = sub_g_vis$nodes, edges = sub_g_vis$edges) %>% 
+    visInteraction(navigationButtons = TRUE) %>% 
+    visOptions(highlightNearest = TRUE, selectedBy  = "community") 
+```
+
+
+
+##Other clustring mothods
+Results looks bad.
+###Making adjacency & similarity matrix
 ```{r}
 A <- as_adjacency_matrix(g, attr = "n")
-```
-##Simlilarity matrix and dist
-```{r}
 S <- qlcMatrix::corSparse(A)
+
+```
+### Hierachical clustering
+```{r}
 H <- 1-S
 d <- as.dist(H)
 ```
-## hierachical clustering
+
 ```{r}
 factoextra::fviz_nbclust(S, 
              FUNcluster = factoextra::hcut,
@@ -225,6 +292,7 @@ factoextra::fviz_nbclust(S,
              k.max = 20          
              ) + 
   labs(title="Silhouette method") 
+# 2 cluster is the best
 ```
 
 ```{r}
@@ -238,7 +306,7 @@ df_cluster %>%
             mean_rating = mean(crew_average_rating))
 ```
 
-##Spectral clustring
+###Spectral clustring
 ```{r}
 # http://www.di.fc.ul.pt/~jpn/r/spectralclustering/spectralclustering.html
 make_affinity <- function(S, n.neighboors=2) {
@@ -313,6 +381,8 @@ df_cluster %>%
 
 
 
+
+
 #Clustering for movies
 ```{r}
 const <- df %>% 
@@ -322,8 +392,6 @@ const <- df %>%
   slice(1) %>% #Each person can only appears one time in each movie
   select(tconst, nconst) %>% 
   ungroup()
-
-const %>% count(tconst) %>% View()
 ```
 
 ```{r}
@@ -347,10 +415,9 @@ A[1:10, 1:10]
 ```
 ```{r}
 factoextra::fviz_nbclust(as.matrix(A), 
-             FUNcluster = factoextra::kmeans,
+             FUNcluster = kmeans,
              method = "silhouette",     
              k.max = 16          
              ) + 
   labs(title="Silhouette method") 
 ```
-
